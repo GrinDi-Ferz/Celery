@@ -1,6 +1,6 @@
 import io
 import pytest
-from task_serves import app, upscale_task  # поправьте импорт под ваш проект
+from task_serves import app, upscale_task
 from celery.result import AsyncResult
 
 @pytest.fixture
@@ -9,10 +9,10 @@ def client():
     with app.test_client() as client:
         yield client
 
-# Для тестов с Celery лучше запускать задачу синхронно, чтобы получить результат сразу
+# Для тестов с Celery
 @pytest.fixture(autouse=True)
 def celery_eager(monkeypatch):
-    # Это включает выполнение задач Celery "сразу" в тестах, без брокера
+
     monkeypatch.setattr(upscale_task, 'apply_async', lambda *args, **kwargs: upscale_task(*args[0]))
 
 def test_upload_file_success(client):
@@ -48,7 +48,7 @@ def test_upload_file_empty_filename(client):
     assert json_data['error'] == 'Empty filename'
 
 def test_get_task_status_success(client):
-    # Генерируем простой черный картинку в байтах и запускаем задачу напрямую
+    # Генерируем простой черный картинку в байтах
     import cv2
     import numpy as np
 
@@ -61,7 +61,6 @@ def test_get_task_status_success(client):
     task = upscale_task.apply_async(args=[image_bytes])
     task_id = task.id if hasattr(task, 'id') else 'test_task'
 
-    # Включаем eager режим: в реальном тесте вы можете просто вызвать функцию напрямую
     # Теперь делаем get запрос к статусу
     response = client.get(f'/tasks/{task_id}')
     assert response.status_code == 200
@@ -77,7 +76,7 @@ def test_get_task_status_success(client):
 
 def test_get_task_status_invalid(client):
     response = client.get('/tasks/invalid_task_id')
-    # Вернется статус (PENDING, FAILURE или тп)
+    # Вернется статус
     assert response.status_code == 200
     json_data = response.get_json()
     assert 'status' in json_data
