@@ -1,6 +1,6 @@
 import io
 import pytest
-from task_serves import app, upscale_task
+from app import app, upscale_task
 from celery.result import AsyncResult
 
 @pytest.fixture

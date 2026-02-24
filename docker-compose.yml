@@ -9,7 +9,7 @@ services:
   web:
     build: .
     environment:
-      - FLASK_APP=task_serves.py
+      - FLASK_APP=app.py
       - FLASK_RUN_HOST=0.0.0.0
       - FLASK_ENV=development
       - MODEL_PATH=/EDSR_x2.pb
@@ -27,7 +27,7 @@ services:
     build: .
     command: celery -A app.celery worker --loglevel=info
     environment:
-      - FLASK_APP=task_serves.py
+      - FLASK_APP=app.py
       - MODEL_PATH=/EDSR_x2.pb
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0

@@ -6,6 +6,7 @@ from upscale import upscale
 from celery.result import AsyncResult
 import cv2
 import numpy as np
+from werkzeug.utils import secure_filename
 
 # Конфигурация
 UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', 'uploads')
@@ -25,9 +26,14 @@ CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://localho
 celery = Celery(app.name, broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
 
 
+ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'bmp', 'tiff'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 # Celery задача на апскейлинг
 @celery.task(bind=True)
-def upscale_task(self, image_bytes: bytes) -> bytes:
+def upscale_task(self, image_bytes: bytes) -> str:
     # Из байт в numpy array
     nparr = np.frombuffer(image_bytes, np.uint8)
     image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -42,26 +48,35 @@ def upscale_task(self, image_bytes: bytes) -> bytes:
     if not success:
         raise RuntimeError("Failed to encode image")
 
-    return encoded_img.tobytes()
+    # Сохраняем в файл с именем task_id.jpg
+    filename = f"{self.request.id}.jpg"
+    filepath = os.path.join(PROCESSED_FOLDER, filename)
+    with open(filepath, 'wb') as f:
+        f.write(encoded_img.tobytes())
+
+    return filename  # возвращаем имя файла
 
 # Роуты
 
 # 1) POST /upscale - загрузить файл и запустить апскейлинг
 @app.route('/upscale', methods=['POST'])
 def upload_file():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image uploaded'}), 400
 
-    file = request.files['file']
-    if file.filename == '':
+    image_file = request.files['image']
+    if image_file.filename == '':
         return jsonify({'error': 'Empty filename'}), 400
 
-    image_bytes = file.read()
+    if not allowed_file(image_file.filename):
+        return jsonify({'error': 'File format not allowed'}), 400
+
+    image_bytes = image_file.read()
 
     # Запускаем celery задачу с байтами
     task = upscale_task.apply_async(args=[image_bytes])
 
-    return jsonify({'task_id': task.id}), 202
+    return jsonify({'task_id': task.id, 'status': 'processing'}), 202
 
 # 2) GET /tasks/<task_id> - получить статус задачи и ссылку на результат
 @app.route('/tasks/<task_id>', methods=['GET'])
@@ -70,12 +85,9 @@ def get_task_status(task_id):
     response = {'task_id': task_id, 'status': task.status}
 
     if task.status == 'SUCCESS':
-        # получаем байты результата
-        img_bytes = task.result
-        return send_file(io.BytesIO(img_bytes),
-                         mimetype='image/jpeg',
-                         as_attachment=True,
-                         download_name='upscaled.jpg')
+        filename = task.result  # имя файла, возвращённое задачей
+        file_url = f"/processed/{filename}"
+        response['result_url'] = file_url
 
     elif task.status == 'FAILURE':
         response['error'] = str(task.result)
@@ -85,7 +97,16 @@ def get_task_status(task_id):
 # 3) GET /processed/<filename> - отдача обработанного файла
 @app.route('/processed/<filename>', methods=['GET'])
 def get_processed_file(filename):
-    return send_from_directory(app.config['PROCESSED_FOLDER'], filename)
+    safe_filename = secure_filename(filename)
+    if filename != safe_filename:
+        # Попытка доступа с опасным именем
+        abort(400, description="Invalid filename")
+
+    filepath = os.path.join(app.config['PROCESSED_FOLDER'], safe_filename)
+    if not os.path.isfile(filepath):
+        abort(404, description="File not found")
+
+    return send_from_directory(app.config['PROCESSED_FOLDER'], safe_filename)
 
 # Запуск Flask
 if __name__ == '__main__':
